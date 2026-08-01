@@ -8,7 +8,7 @@ from yt_dlp import YoutubeDL
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # ضع توكن البوت الخاص بك هنا
-BOT_TOKEN = "8859717725:AAFt9FWRA5kkmzZSNsUjQ1qv79l9kSR4i4Q"
+BOT_TOKEN = "8989802980:AAEUVZmlLSfsXgRfa2XgBwIlB_Re6ku7lvs"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("أهلاً بك! أرسل لي رابط فيديو من منصة X (تويتر) وسأقوم بتحميله لك فوراً.")
