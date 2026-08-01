@@ -1,29 +1,15 @@
-import os
-import logging
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from yt_dlp import YoutubeDL
-
-# إعداد السجلات لمتابعة الأخطاء
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-
-# ضع توكن البوت الخاص بك هنا
-BOT_TOKEN = "8989802980:AAEUVZmlLSfsXgRfa2XgBwIlB_Re6ku7lvs"
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أهلاً بك! أرسل لي رابط فيديو من منصة X (تويتر) وسأقوم بتحميله لك فوراً.")
-
 async def download_twitter_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
-    
+
     if not ("twitter.com" in url or "x.com" in url):
-        await update.message.reply_text("عذراً، يرجى إرسال رابط صحيح من منصة X (تويتر).")
+        await update.message.reply_text("الرجاء إرسال رابط صحيح من منصة X")
         return
 
-    msg = await update.message.reply_text("جارٍ تحميل الفيديو... انتظر لحظة ⏳")
-    
+    msg = await update.message.reply_text("جاري تحميل الفيديو... انتظر لحظة")
+
+    # إعدادات yt-dlp المحسّنة لتفادي مشاكل الدمج والتنسيق
     ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'format': 'best[ext=mp4]/best',
         'outtmpl': 'downloads/%(id)s.%(ext)s',
         'quiet': True,
         'no_warnings': True,
@@ -34,23 +20,14 @@ async def download_twitter_video(update: Update, context: ContextTypes.DEFAULT_T
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
 
-        await update.message.reply_video(video=open(filename, 'rb'), caption="تم التحميل بنجاح! 🎬")
-        
-        os.remove(filename)
-        await msg.delete()
+        # إرسال الفيديو للمستخدم
+        with open(filename, 'rb') as video:
+            await update.message.reply_video(video=video)
+
+        # حذف الملف بعد الإرسال لتوفير المساحة
+        if os.path.exists(filename):
+            os.remove(filename)
 
     except Exception as e:
         logging.error(f"Error: {e}")
-        await msg.edit_text("حدث خطأ أثناء تحميل الفيديو. تأكد من أن الحساب غير خاص أو أن الرابط يحتوي على فيديو.")
-
-def main():
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download_twitter_video))
-
-    print("البوت يعمل الآن...")
-    app.run_polling()
-
-if __name__ == '__main__':
-    main()
+        await update.message.reply_text("حدث خطأ أثناء تحميل الفيديو، تأكد من أن الحساب ليس خاصاً.")
