@@ -1,124 +1,67 @@
 import os
 import logging
-from telegram import Update, InputMediaPhoto
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram import Update
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from yt_dlp import YoutubeDL
 
-# إعداد السجلات لمتابعة الأخطاء
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 
-# لجلب التوكن من متغيرات البيئة (أفضل أماناً)، أو استخدم التوكن المباشر
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8989802980:AAEUVZmlLSfsXgRfa2XgBwIlB_Re6ku7lvs")
 
-# دالة الترحب عند بدء التشغيل
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "أهلاً بك! 👋\n\nأرسل لي أي رابط تغريدة تحتوي على **فيديو** أو **صور** من منصة X (تويتر)، وسأقوم بتحميلها لك فوراً."
-    )
+    await update.message.reply_text("أهلاً بك! 👋 أرسل لي رابط فيديو من (X/Twitter, Instagram, YouTube, TikTok, إلخ) وسأقوم بتحميله لك.")
 
-# دالة المعالجة والتحميل
-async def handle_twitter_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_media_download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
+    status_msg = await update.message.reply_text("⏳ جاري استخراج الفيديو وتحميله...")
 
-    # التحقق من صحة الرابط
-    if not ("twitter.com" in url or "x.com" in url):
-        await update.message.reply_text("❌ الرجاء إرسال رابط صحيح من منصة X (تويتر).")
-        return
-
-    status_msg = await update.message.reply_text("جاري جلب المحتوى... انتظر لحظة ⏳")
-
-    if not os.path.exists('downloads'):
-        os.makedirs('downloads')
-
-    # إعدادات yt-dlp المرنة للتعامل مع الفيديو والصور
+    # إعدادات yt-dlp المعززة لدعم تويتر (X) وكافة المنصات
     ydl_opts = {
-        'format': 'best[ext=mp4]/best',
-        'outtmpl': 'downloads/%(id)s_%(autonumber)s.%(ext)s',
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl': 'downloads/%(id)s.%(ext)s',
         'quiet': True,
         'no_warnings': True,
-        'extract_flat': False,
+        # إضافة User-Agent لضمان تجاوز حظر وتغييرات روابط تويتر/X
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        },
+        'postprocessors': [{
+            'key': 'FFmpegVideoConvertor',
+            'preferedformat': 'mp4',
+        }],
     }
-
-    downloaded_files = []
 
     try:
         with YoutubeDL(ydl_opts) as ydl:
-            # استخراج معلومات التغريدة
             info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            base, _ = os.path.splitext(filename)
+            video_file = f"{base}.mp4" if os.path.exists(f"{base}.mp4") else filename
 
-            # معالجة المنشورات القائمة على قائمة (مثل ألبوم الصور)
-            if 'entries' in info:
-                entries = info['entries']
-            else:
-                entries = [info]
+        with open(video_file, 'rb') as vf:
+            await update.message.reply_video(
+                video=vf,
+                caption=info.get('title', 'تم التحميل بنجاح!')
+            )
 
-            for entry in entries:
-                filename = ydl.prepare_filename(entry)
-                if os.path.exists(filename):
-                    downloaded_files.append(filename)
+        if os.path.exists(video_file):
+            os.remove(video_file)
 
-        if not downloaded_files:
-            await status_msg.edit_text("❌ لم يتم العثور على وسائط قابلة للتحميل في هذا الرابط.")
-            return
-
-        # التفريق بين الصور والفيديوهات وإرسالها للمستخدم
-        photos_to_send = []
-        for file_path in downloaded_files:
-            ext = file_path.split('.')[-1].lower()
-            
-            # إذا كان المحتوى فيديو
-            if ext in ['mp4', 'mkv', 'mov', 'webm']:
-                with open(file_path, 'rb') as video:
-                    await update.message.reply_video(video=video, caption="تم تحميل الفيديو بنجاح! 🎬")
-            
-            # إذا كان المحتوى صورة
-            elif ext in ['jpg', 'jpeg', 'png', 'webp']:
-                photos_to_send.append(file_path)
-
-        # إرسال الصور (كمجموعة ألبوم إن كانت أكثر من صورة)
-        if photos_to_send:
-            if len(photos_to_send) == 1:
-                with open(photos_to_send[0], 'rb') as photo:
-                    await update.message.reply_photo(photo=photo, caption="تم تحميل الصورة بنجاح! 📸")
-            else:
-                media_group = []
-                files_handles = []
-                for path in photos_to_send:
-                    f = open(path, 'rb')
-                    files_handles.append(f)
-                    media_group.append(InputMediaPhoto(media=f))
-                
-                await update.message.reply_media_group(media=media_group)
-                
-                # إغلاق الملفات المفتوحة
-                for f in files_handles:
-                    f.close()
-
-        # حذف الرسالة المؤقتة "جاري التحميل"
         await status_msg.delete()
 
     except Exception as e:
-        logging.error(f"حدث خطأ أثناء التنزيل: {e}")
-        await status_msg.edit_text("❌ حدث خطأ أثناء التحميل. تأكد من أن التغريدة تحتوي على وسائط وأن الحساب ليس خاصاً.")
+        logging.error(f"Error downloading video: {e}")
+        await status_msg.edit_text("❌ عذراً، تعذر تحميل الفيديو. تأكد من أن الحساب غير خاص وأن الرابط صحيح.")
 
-    finally:
-        # التنظيف الذاتي: حذف جميع الملفات المحملة بعد الإرسال للحفاظ على مساحة السيرفر
-        for file_path in downloaded_files:
-            if os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                except Exception:
-                    pass
-
-# التشغيل الرئيسي
-if __name__ == '__main__':
+def main():
     app = Application.builder().token(BOT_TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_twitter_media))
-
-    print("البوت يعمل بنجاح الآن...")
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_media_download))
     app.run_polling()
+
+if __name__ == '__main__':
+    os.makedirs('downloads', exist_ok=True)
+    main()
