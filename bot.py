@@ -1,97 +1,116 @@
-import os
-import re
 import logging
-import asyncio
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from threading import Thread
 import yt_dlp
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-# إعداد التسجيل للمتابعة
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+# =========================================================
+# 1. السيرفر الوهمي لتجاوز مشكلة المنفذ (Port) في Render
+# =========================================================
 
-# توكن البوت الخاص بك من BotFather
-TOKEN = '8989802980:AAEUVZmlLSfsXgRfa2XgBwIlB_Re6ku7lvs'
 
-# مجلد حفظ التنزيلات
-DOWNLOAD_DIR = 'downloads'
-if not os.path.exists(DOWNLOAD_DIR):
-    os.makedirs(DOWNLOAD_DIR)
+class SimpleHTTPRequestHandler(BaseHTTPRequestHandler):
+
+  def do_GET(self):
+    self.send_response(200)
+    self.end_headers()
+    self.wfile.write(b'Bot is running successfully!')
+
+
+def run_dummy_server():
+  port = int(os.environ.get('PORT', 8080))
+  server = HTTPServer(('0.0.0.0', port), SimpleHTTPRequestHandler)
+  server.serve_forever()
+
+
+# تشغيل السيرفر في الخلفية عند بدء التشغيل
+Thread(target=run_dummy_server, daemon=True).start()
+
+# =========================================================
+# 2. إعدادات البوت واللوج
+# =========================================================
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+)
+
+# ضع توكن البوت الخاص بك هنا (بين التنصيص) أو استخدم Environment Variable باسم BOT_TOKEN
+TELEGRAM_BOT_TOKEN = os.environ.get(
+    'BOT_TOKEN', '8989802980:AAEUVZmlLSfsXgRfa2XgBwIlB_Re6ku7lvs'
+)
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("مرحباً بك! أرسل لي رابط فيديو من أي منصة (تيك توك، إنستغرام، X/تويتر، يوتيوب...) وسأقوم بتحميله لك فوراً.")
+  """أمر البداية /start"""
+  await update.message.reply_text(
+      'أهلاً بك! 👋\nأرسل لي رابط فيديو من (تيك توك، إنستغرام، يوتيوب،'
+      ' تويتر...) وسأقوم بتحميله لك فوراً.'
+  )
 
-async def download_video(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    url = update.message.text.strip()
-    
-    # التحقق من أن النص يحتوي على رابط
-    if not re.match(r'https?://[^\s]+', url):
-        return
 
-    msg = await update.message.reply_text("⏳ جاري معالجة الرابط وتحميل الفيديو...")
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+  """معالجة الرابط المباشر وتحميل الفيديو"""
+  url = update.message.text.strip()
 
-    # إعدادات yt-dlp الشاملة لمعظم المنصات
-    ydl_opts = {
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl': os.path.join(DOWNLOAD_DIR, '%(id)s.%(ext)s'),
-        'quiet': True,
-        'no_warnings': True,
-        'merge_output_format': 'mp4',
-        # متطلبات لتفادي الحظر من بعض المنصات مثل TikTok وInstagram
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        }
-    }
+  if not url.startswith(('http://', 'https://')):
+    await update.message.reply_text('من فضلك أرسل رابطاً صحيحاً للفيديو.')
+    return
 
-    filename = None
-    try:
-        # تشغيل yt-dlp في المسار غير المتزامن لعدم تجميد البوت
-        loop = asyncio.get_running_loop()
-        def extract():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                return ydl.prepare_filename(info)
+  msg = await update.message.reply_text('جاري جلب وتحميل الفيديو... ⏳')
+  output_filename = f'video_{update.message.message_id}.mp4'
 
-        filename = await loop.run_in_executor(None, extract)
+  # إعدادات التحميل عبر yt-dlp
+  ydl_opts = {
+      'format': (
+          'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+      ),
+      'outtmpl': output_filename,
+      'quiet': True,
+      'max_filesize': 50 * 1024 * 1024,  # الحد الأقصى 50 ميجابايت
+  }
 
-        # التأكد من صحة امتداد الملف بعد الدمج
-        if not os.path.exists(filename):
-            base_filename = os.path.splitext(filename)[0]
-            if os.path.exists(f"{base_filename}.mp4"):
-                filename = f"{base_filename}.mp4"
+  try:
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+      ydl.download([url])
 
-        # إرسال الفيديو للمستخدم
-        with open(filename, 'rb') as video_file:
-            await update.message.reply_video(
-                video=video_file,
-                caption="✨ تم التحميل بنجاح!"
-            )
+    # إرسال الفيديو للمستخدم
+    await update.message.reply_video(
+        video=open(output_filename, 'rb'),
+        caption='تم التحميل بنجاح! 🎬',
+    )
+    await msg.delete()
 
-    except Exception as e:
-        logging.error(f"Error downloading {url}: {e}")
-        await msg.edit_text("❌ تعذر تحميل الفيديو. أرجو التأكد من صحة الرابط أو أن الحساب ليس خاصاً.")
-    
-    finally:
-        # حذف رسالة "جاري التحميل"
-        try:
-            await msg.delete()
-        except Exception:
-            pass
+  except Exception as e:
+    logging.error(f'Error: {e}')
+    await msg.edit_text(
+        'حدث خطأ أثناء تحميل الفيديو. تأكد من صحة الرابط وأن الحساب ليس خاصاً'
+        ' (Private).'
+    )
 
-        # مسح الملف من السيرفر لتوفير المساحة
-        if filename and os.path.exists(filename):
-            try:
-                os.remove(filename)
-            except Exception as e:
-                logging.error(f"Error deleting file: {e}")
+  finally:
+    # تنظيف الملفات المؤقتة من السيرفر
+    if os.path.exists(output_filename):
+      os.remove(output_filename)
 
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, download_video))
-
-    print("... البوت يعمل الآن")
-    app.run_polling()
-
+# =========================================================
+# 3. تشغيل تطبيق البوت
+# =========================================================
 if __name__ == '__main__':
-    main()
+  app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+
+  app.add_handler(CommandHandler('start', start))
+  app.add_handler(
+      MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
+  )
+
+  print('Bot is polling...')
+  app.run_polling()
