@@ -10,7 +10,7 @@ import yt_dlp
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
 # توكن البوت الخاص بك من BotFather
-TOKEN = '8989802980:AAEUVZmllSfsXgRfa2XgBwI1B_Re6ku7lvs'
+TOKEN = '8989802980:AAEUVZmlLSfsXgRfa2XgBwIlB_Re6ku7lvs'
 
 # مجلد حفظ التنزيلات
 DOWNLOAD_DIR = 'downloads'
